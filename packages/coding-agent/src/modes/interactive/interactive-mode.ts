@@ -3049,7 +3049,7 @@ export class InteractiveMode {
 		this.showStatus(`Thinking blocks: ${this.hideThinkingBlock ? "hidden" : "visible"}`);
 	}
 
-	private openExternalEditor(): void {
+	private async openExternalEditor(): Promise<void> {
 		// Determine editor (respect $VISUAL, then $EDITOR)
 		const editorCmd = process.env.VISUAL || process.env.EDITOR;
 		if (!editorCmd) {
@@ -3070,14 +3070,21 @@ export class InteractiveMode {
 			// Split by space to support editor arguments (e.g., "code --wait")
 			const [editor, ...editorArgs] = editorCmd.split(" ");
 
-			// Spawn editor synchronously with inherited stdio for interactive editing
-			const result = spawnSync(editor, [...editorArgs, tmpFile], {
+			// Spawn editor asynchronously to avoid blocking Bun's event loop.
+			// spawnSync blocks the event loop which prevents stdin from being
+			// forwarded to interactive editors like vim/nvim that need raw mode.
+			const proc = spawn(editor, [...editorArgs, tmpFile], {
 				stdio: "inherit",
 				shell: process.platform === "win32",
 			});
 
+			const exitCode = await new Promise<number | null>((resolve) => {
+				proc.on("close", (code) => resolve(code));
+				proc.on("error", () => resolve(null));
+			});
+
 			// On successful exit (status 0), replace editor content
-			if (result.status === 0) {
+			if (exitCode === 0) {
 				const newContent = fs.readFileSync(tmpFile, "utf-8").replace(/\n$/, "");
 				this.editor.setText(newContent);
 			}
